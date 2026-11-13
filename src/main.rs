@@ -1,8 +1,40 @@
-use std::println;
+use std::{fs, println};
 
 use itertools::Itertools;
+use lazy_static::lazy_static;
 
-use crate::LetterReq::{Black, Green};
+use crate::{
+    Commands::{Solve, Test},
+    LetterReq::{Black, Green},
+};
+
+use clap::{Parser, Subcommand};
+
+#[derive(Parser)]
+#[command(version, about, long_about = None)]
+struct Cli {
+    // /// Selects the dictionary to use (default: <inner>)
+    // #[arg(short, long, value_name = "FILE")]
+    // dict: Option<String>,
+
+    // Selects the drawing to validate against
+    #[arg(short, long, value_name = "FILE", default_value_t = "examples/67.in".to_owned())]
+    drawing: String,
+
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Solves the drawing for a specific Wordle answer
+    Solve {
+        #[arg(required = true)]
+        wordle_answer: String,
+    },
+    /// Checks all words for compatibility with the drawing and returns a count
+    Test,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LetterReq {
@@ -25,14 +57,17 @@ impl TryFrom<char> for LetterReq {
 type WordPattern = [LetterReq; 5];
 type Drawing = Vec<WordPattern>;
 
-fn main() {
-    #[allow(non_snake_case)]
-    let WORDLIST = include_str!("valid-wordle-words.txt")
+lazy_static! {
+    static ref WORDLIST: Vec<String> = include_str!("valid-wordle-words.txt")
         .lines()
         .map(|s| s.to_string())
         .collect_vec();
+}
+fn main() {
+    let cli = Cli::parse();
 
-    let pattern_strings: Vec<Vec<LetterReq>> = include_str!("pattern.in")
+    let drawing_strings: Vec<Vec<LetterReq>> = fs::read_to_string(cli.drawing)
+        .expect("invalid drawing path!")
         .lines()
         .map(|s| {
             s.chars()
@@ -42,46 +77,38 @@ fn main() {
         })
         .collect();
 
-    assert!(pattern_strings.iter().all(|v| v.len() == 5));
+    assert!(drawing_strings.iter().all(|v| v.len() == 5));
 
-    let drawing: Drawing = pattern_strings
+    let drawing: Drawing = drawing_strings
         .iter()
         .map(|v| [v[0], v[1], v[2], v[3], v[4]])
         .collect();
 
-    // let word: String = get_var("word: ").expect("cannot parse");
+    match &cli.command {
+        Solve { wordle_answer } => {
+            assert!(wordle_answer.len() == 5);
 
-    let word = std::env::args()
-        .nth(1)
-        .expect("provide 1 argument")
-        .trim()
-        .to_owned()
-        .to_ascii_lowercase();
+            let valid_words = match_drawing(&drawing, wordle_answer.as_str());
 
-    assert!(word.len() == 5);
-
-    let lists_of_words = drawing
-        .iter()
-        .map(|pat| {
-            WORDLIST
+            println!("Found matches:");
+            for v in valid_words {
+                println!("{v:?}");
+            }
+        }
+        Test => {
+            let valid_count = WORDLIST
                 .iter()
-                .filter(|w| match_pattern(pat, w.as_str(), word.as_str()))
-                .collect_vec()
-        })
-        .collect_vec();
-
-    println!("Found matches:");
-    for v in lists_of_words {
-        println!("{v:?}");
+                .filter(|w| match_drawing(&drawing, &w).iter().all(|v| v.len() >= 1))
+                .count();
+            println!(
+                "possible words: {}/{} ({}%)",
+                valid_count,
+                WORDLIST.len(),
+                f64::trunc((valid_count as f64 / WORDLIST.len() as f64) * 100.0)
+            );
+        }
     }
 }
-
-// fn get_var<T: FromStr>(prompt: &str) -> Option<T> {
-//     println!("{prompt}");
-//     let mut buf = String::new();
-//     io::stdin().read_line(&mut buf).ok()?;
-//     buf.parse().ok()
-// }
 
 fn match_pattern(reqs: &WordPattern, needle: &str, wordle_answer: &str) -> bool {
     let all_match =
@@ -100,4 +127,16 @@ fn match_pattern(reqs: &WordPattern, needle: &str, wordle_answer: &str) -> bool 
         });
 
     all_match && no_yellow
+}
+
+fn match_drawing<'a>(drawing: &'a Drawing, wordle_answer: &'a str) -> Vec<Vec<&'a String>> {
+    drawing
+        .iter()
+        .map(|pat| {
+            WORDLIST
+                .iter()
+                .filter(|w| match_pattern(pat, w.as_str(), wordle_answer))
+                .collect_vec()
+        })
+        .collect_vec()
 }
